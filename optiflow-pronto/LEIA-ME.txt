@@ -1,0 +1,39 @@
+OPTIFLOW - LOGIN E CONTROLE DE USUARIOS
+======================================
+
+Esta versão inclui autenticação real com servidor Node.js.
+O primeiro acesso abre uma tela para criar o primeiro gestor.
+Depois disso, o cadastro de novos acessos fica disponível em "Usuários e acessos".
+
+COMO INSTALAR
+1. Extraia o ZIP.
+2. Abra a pasta optiflow-pronto no VS Code.
+3. Abra Terminal > Novo Terminal.
+4. Execute: npm install
+5. Execute: npm run dev
+6. Abra o endereço mostrado pelo Vite (normalmente http://localhost:5173).
+7. No primeiro acesso, crie o nome, usuário e senha do gestor.
+
+CADASTRO DE FUNCIONÁRIOS
+1. Entre com a conta de gestor.
+2. Clique em "Usuários e acessos" no menu.
+3. Cadastre nome, usuário e senha inicial.
+4. Escolha Funcionário e atribua um único setor.
+5. O funcionário entra com o usuário e senha e só vê o setor atribuído.
+
+SEGURANÇA E DADOS
+- As senhas são armazenadas com hash bcrypt; não ficam em texto puro.
+- A sessão usa token JWT com validade de 12 horas.
+- O segredo JWT é criado automaticamente em server-data/.jwt-secret.
+- Os usuários ficam em server-data/users.json. Faça backup dessa pasta.
+- Não apague server-data se quiser preservar os cadastros.
+- Para usar em outros computadores da rede, o servidor precisa ficar ligado e
+  a rede/firewall precisam permitir o acesso. Configure isso antes de uso real.
+
+LIMITAÇÕES IMPORTANTES
+- O login e as permissões estão implementados, mas as telas de produção, quebras
+  e expedição ainda usam dados demonstrativos.
+- Esta versão não está conectada ao sistema atual do laboratório.
+- O arquivo de usuários JSON é adequado para protótipo/pequena instalação local;
+  antes de uso empresarial multiusuário, recomendamos migrar para banco de dados,
+  HTTPS, política de backup e configuração de rede.
