@@ -16,6 +16,7 @@ const navGroups = [
   { title: 'CONTROLE', items: [
     { id: 'quebras', label: 'Controle de quebras', icon: AlertTriangle },
     { id: 'expedicao', label: 'Expedição', icon: Truck, count: 9 },
+    { id: 'movimentacoes', label: 'Movimentações', icon: CalendarDays, allUsers: true },
   ]},
 ]
 
@@ -40,11 +41,12 @@ const pageTitles = {
   tradicional: ['Surfaçagem Tradicional', 'Acompanhamento da produção tradicional.'],
   quebras: ['Controle de quebras', 'Indicadores e ocorrências de perdas.'],
   expedicao: ['Expedição', 'Acompanhamento das ordens prontas para envio.'],
+  movimentacoes: ['Movimentações', 'Registre entradas e saídas e consulte o movimento diário por setor.'],
 }
 
 function Sidebar({ active, setActive, open, close, user, onLogout }) {
   const isManager = user.role === 'gestor'
-  const allowedGroups = navGroups.map(group => ({ ...group, items: group.items.filter(item => isManager || item.id === user.sector) })).filter(group => group.items.length)
+  const allowedGroups = navGroups.map(group => ({ ...group, items: group.items.filter(item => isManager || item.id === user.sector || item.allUsers) })).filter(group => group.items.length)
   return <>
     {open && <button className="mobile-scrim" aria-label="Fechar menu" onClick={close} />}
     <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
@@ -107,6 +109,49 @@ function OrdersTable({ rows = orders }) {
   return <div className="table-wrap"><table><thead><tr><th>ORDEM DE SERVIÇO</th><th>CLIENTE</th><th>SETOR</th><th>STATUS</th><th>TEMPO</th></tr></thead>
     <tbody>{rows.map(row => <tr key={row.os}><td><b className="os-number">{row.os}</b></td><td>{row.client}</td><td>{row.sector}</td><td><span className={`status ${row.status === 'Concluída' ? 'done' : row.status === 'Aguardando' ? 'waiting' : 'working'}`}><i/>{row.status}</span></td><td className="time-cell"><Clock3 size={14}/>{row.time}</td></tr>)}</tbody>
   </table></div>
+}
+
+
+function GlobalOrderSearch() {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const normalized = query.trim().toLocaleLowerCase('pt-BR')
+  const numericQuery = normalized.replace(/\D/g, '')
+  const isOnlyNumbers = /^\d+$/.test(normalized)
+  const results = normalized
+    ? orders.filter(order => {
+        if (isOnlyNumbers) {
+          // Quando a pesquisa for numérica, compara somente o início do número da OS.
+          const osNumbers = String(order.os).replace(/\D/g, '')
+          return osNumbers.startsWith(numericQuery)
+        }
+        // Para nomes de clientes ou códigos digitados com letras, mantém a busca textual.
+        return `${order.os} ${order.client}`.toLocaleLowerCase('pt-BR').includes(normalized)
+      })
+    : []
+
+  return <div className="global-search">
+    <label className="global-search-field">
+      <Search size={16}/>
+      <input
+        value={query}
+        onChange={event => { setQuery(event.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={event => { if (event.key === 'Escape') setOpen(false) }}
+        placeholder="Pesquisar OS ou cliente..."
+        aria-label="Pesquisar ordem de serviço por OS ou nome do cliente"
+      />
+      {query && <button type="button" onClick={() => { setQuery(''); setOpen(false) }} aria-label="Limpar pesquisa"><X size={14}/></button>}
+    </label>
+    {open && query.trim() && <div className="global-search-results">
+      <div className="global-search-caption">RESULTADOS EM TODOS OS SETORES</div>
+      {results.length ? results.map(order => <div className="global-search-result" key={order.os}>
+        <div><b>{order.os}</b><span>{order.client}</span></div>
+        <div className="global-search-meta"><span>{order.sector}</span><small className={`status ${order.status === 'Concluída' ? 'done' : order.status === 'Aguardando' ? 'waiting' : 'working'}`}>{order.status}</small></div>
+      </div>) : <p className="global-search-empty">Nenhum serviço encontrado para essa pesquisa.</p>}
+      <p className="global-search-note">A pesquisa considera todos os setores. Os resultados atuais são demonstrativos.</p>
+    </div>}
+  </div>
 }
 
 function Dashboard() {
@@ -174,6 +219,103 @@ function SectionPage({ page }) {
   </div>
 }
 
+
+function localDateValue(date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+function localDateTimeValue(date = new Date()) {
+  return `${localDateValue(date)}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+function MovementsPage({ token, user }) {
+  const isManager = user.role === 'gestor'
+  const sectorOptions = [
+    { id: 'montagem', label: 'Montagem' },
+    { id: 'digital', label: 'Surfaçagem Digital' },
+    { id: 'tradicional', label: 'Surfaçagem Tradicional' },
+  ]
+  const [movements, setMovements] = useState([])
+  const [selectedDate, setSelectedDate] = useState(localDateValue())
+  const [os, setOs] = useState('')
+  const [sector, setSector] = useState(user.sector || 'montagem')
+  const [type, setType] = useState('entrada')
+  const [occurredAt, setOccurredAt] = useState(localDateTimeValue())
+  const [notes, setNotes] = useState('')
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function loadMovements() {
+    const response = await fetch(`${API}/movements`, { headers: { Authorization: `Bearer ${token}` } })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Não foi possível carregar as movimentações.')
+    setMovements(data.movements || [])
+  }
+  useEffect(() => { loadMovements().catch(err => setError(err.message)) }, [token])
+
+  const dayMovements = movements.filter(item => localDateValue(new Date(item.occurredAt)) === selectedDate)
+  const report = sectorOptions.map(option => ({
+    ...option,
+    entries: dayMovements.filter(item => item.sector === option.id && item.type === 'entrada').length,
+    exits: dayMovements.filter(item => item.sector === option.id && item.type === 'saida').length,
+  }))
+  const totalEntries = report.reduce((sum, item) => sum + item.entries, 0)
+  const totalExits = report.reduce((sum, item) => sum + item.exits, 0)
+
+  async function submitMovement(event) {
+    event.preventDefault()
+    setError(''); setSuccess(''); setSaving(true)
+    try {
+      const response = await fetch(`${API}/movements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ os, sector, type, occurredAt, notes }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Não foi possível salvar a movimentação.')
+      await loadMovements()
+      setSelectedDate(localDateValue(new Date(data.movement.occurredAt)))
+      setOs(''); setNotes(''); setSuccess('Movimentação registrada com sucesso.')
+      setOccurredAt(localDateTimeValue())
+    } catch (err) { setError(err.message) }
+    finally { setSaving(false) }
+  }
+
+  return <div className="movement-page">
+    <section className="panel-card movement-form-card">
+      <div className="card-heading"><div><h3>Registrar movimentação</h3><p>Registre quando uma OS entrar ou sair de um setor</p></div></div>
+      <form className="movement-form" onSubmit={submitMovement}>
+        <label> Número da OS <input value={os} onChange={e => setOs(e.target.value)} placeholder="Ex.: OS-260200" required /></label>
+        <label>Setor <select value={sector} onChange={e => setSector(e.target.value)} disabled={!isManager}>{sectorOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+        <label>Movimentação <select value={type} onChange={e => setType(e.target.value)}><option value="entrada">Entrada no setor</option><option value="saida">Saída do setor</option></select></label>
+        <label>Data e horário <input type="datetime-local" value={occurredAt} max={localDateTimeValue()} onChange={e => setOccurredAt(e.target.value)} required /></label>
+        <label className="movement-notes">Observação (opcional) <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ex.: encaminhada para o próximo setor" maxLength={300}/></label>
+        <button className="auth-submit" disabled={saving}>{saving ? 'Salvando...' : 'Registrar movimentação'}</button>
+      </form>
+      {error && <p className="auth-error">{error}</p>}{success && <p className="user-success">{success}</p>}
+      <p className="demo-note"><ShieldCheck size={15}/> {isManager ? 'Como gestor, você pode registrar movimentações em qualquer setor.' : 'Seu usuário só pode registrar movimentações do setor ao qual está vinculado.'}</p>
+    </section>
+
+    <section className="panel-card movement-report-card">
+      <div className="card-heading movement-report-heading"><div><h3>Relatório diário por setor</h3><p>Escolha uma data para consultar as entradas e saídas</p></div><label className="date-filter"><CalendarDays size={16}/><input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} /></label></div>
+      <div className="table-wrap"><table className="movement-report-table"><thead><tr><th>SETOR</th><th>ENTRARAM</th><th>SAÍRAM</th><th>SALDO DO DIA</th></tr></thead><tbody>
+        {report.map(item => <tr key={item.id}><td><b>{item.label}</b></td><td><span className="movement-count entry-count">{item.entries}</span></td><td><span className="movement-count exit-count">{item.exits}</span></td><td>{item.entries - item.exits > 0 ? '+' : ''}{item.entries - item.exits}</td></tr>)}
+        <tr className="movement-total-row"><td><b>Total geral</b></td><td><b>{totalEntries}</b></td><td><b>{totalExits}</b></td><td><b>{totalEntries - totalExits > 0 ? '+' : ''}{totalEntries - totalExits}</b></td></tr>
+      </tbody></table></div>
+      {!dayMovements.length && <p className="movement-empty">Nenhuma movimentação registrada nesta data.</p>}
+    </section>
+
+    <section className="panel-card movement-history-card">
+      <div className="card-heading"><div><h3>Movimentações do dia</h3><p>{dayMovements.length} registro(s) em {new Date(`${selectedDate}T12:00:00`).toLocaleDateString('pt-BR')}</p></div></div>
+      {dayMovements.length ? <div className="table-wrap"><table><thead><tr><th>HORÁRIO</th><th>OS</th><th>SETOR</th><th>MOVIMENTAÇÃO</th><th>REGISTRADO POR</th></tr></thead><tbody>
+        {dayMovements.slice().sort((a,b) => b.occurredAt.localeCompare(a.occurredAt)).map(item => <tr key={item.id}><td>{new Date(item.occurredAt).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</td><td><b className="os-number">{item.os}</b></td><td>{item.sectorLabel}</td><td><span className={`movement-pill ${item.type}`}>{item.type === 'entrada' ? 'Entrada' : 'Saída'}</span></td><td>{item.userName}</td></tr>)}
+      </tbody></table></div> : <p className="movement-empty">Os registros feitos aparecerão aqui.</p>}
+    </section>
+  </div>
+}
+
 const API = '/api'
 
 function AuthScreen({ setup, onAuthenticated }) {
@@ -226,7 +368,7 @@ function UsersPage({ token, currentUser }) {
     const d = await r.json(); if (!r.ok) setError(d.error || 'Não foi possível excluir.'); else { setMessage('Usuário excluído.'); loadUsers() }
   }
   const sectorNames = { montagem: 'Montagem', digital: 'Surfaçagem Digital', tradicional: 'Surfaçagem Tradicional' }
-  return <div className="users-page"><section className="panel-card user-create"><div className="card-heading"><div><h3>Cadastrar novo usuário</h3><p>Crie acessos para gestores e funcionários do laboratório.</p></div></div><form className="user-form" onSubmit={createUser}><label>Nome completo<input value={name} onChange={e=>setName(e.target.value)} required placeholder="Nome do funcionário"/></label><label>Nome de usuário<input value={username} onChange={e=>setUsername(e.target.value)} required minLength={3} placeholder="Ex.: joao.silva"/></label><label>Senha inicial<input type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength={8} placeholder="Mínimo de 8 caracteres"/></label><label>Tipo de acesso<select value={role} onChange={e=>setRole(e.target.value)}><option value="funcionario">Funcionário</option><option value="gestor">Gestor</option></select></label>{role === 'funcionario' && <label>Setor do funcionário<select value={sector} onChange={e=>setSector(e.target.value)}><option value="montagem">Montagem</option><option value="digital">Surfaçagem Digital</option><option value="tradicional">Surfaçagem Tradicional</option></select></label>}<button className="auth-submit">Cadastrar usuário</button></form>{message && <p className="user-success">{message}</p>}{error && <p className="auth-error">{error}</p>}</section><section className="panel-card user-list"><div className="card-heading"><div><h3>Usuários cadastrados</h3><p>{users.length} conta(s) com acesso ao OptiFlow</p></div></div><div className="table-wrap"><table><thead><tr><th>NOME</th><th>USUÁRIO</th><th>PERFIL</th><th>SETOR</th><th>AÇÃO</th></tr></thead><tbody>{users.map(u=><tr key={u.id}><td><b>{u.name}</b></td><td>{u.username}</td><td>{u.role === 'gestor' ? 'Gestor' : 'Funcionário'}</td><td>{u.sector ? sectorNames[u.sector] : 'Todos'}</td><td>{u.id !== currentUser.id ? <button className="delete-user" onClick={()=>removeUser(u.id)}>Excluir</button> : <span className="muted">Você</span>}</td></tr>)}</tbody></table></div></section><p className="demo-note"><ShieldCheck size={15}/> As senhas são armazenadas com hash seguro. Funcionários só visualizam o setor atribuído.</p></div>
+  return <div className="users-page"><section className="panel-card user-create"><div className="card-heading"><div><h3>Cadastrar novo usuário</h3><p>Crie acessos para gestores e funcionários do laboratório.</p></div></div><form className="user-form" onSubmit={createUser}><label>Nome completo<input value={name} onChange={e=>setName(e.target.value)} required placeholder="Nome do funcionário"/></label><label>Nome de usuário<input value={username} onChange={e=>setUsername(e.target.value)} required minLength={3} placeholder="Ex.: joao.silva"/></label><label>Senha inicial<input type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength={8} placeholder="Mínimo de 8 caracteres"/></label><label>Tipo de acesso<select value={role} onChange={e=>setRole(e.target.value)}><option value="funcionario">Funcionário</option><option value="gestor">Gestor</option></select></label>{role === 'funcionario' && <label>Setor do funcionário<select value={sector} onChange={e=>setSector(e.target.value)}><option value="montagem">Montagem</option><option value="digital">Surfaçagem Digital</option><option value="tradicional">Surfaçagem Tradicional</option></select></label>}<button className="auth-submit">Cadastrar usuário</button></form>{message && <p className="user-success">{message}</p>}{error && <p className="auth-error">{error}</p>}</section><section className="panel-card user-list"><div className="card-heading"><div><h3>Usuários cadastrados</h3><p>{users.length} conta(s) com acesso ao OptiFlow</p></div></div><div className="table-wrap"><table><thead><tr><th>NOME</th><th>USUÁRIO</th><th>PERFIL</th><th>SETOR</th><th>AÇÃO</th></tr></thead><tbody>{users.map(u=><tr key={u.id}><td><b>{u.name}</b></td><td>{u.username}</td><td>{u.role === 'gestor' ? 'Gestor' : 'Funcionário'}</td><td>{u.sector ? sectorNames[u.sector] : 'Todos'}</td><td>{u.id !== currentUser.id ? <button className="delete-user" onClick={()=>removeUser(u.id)}>Excluir</button> : <span className="muted">Você</span>}</td></tr>)}</tbody></table></div></section><p className="demo-note"><ShieldCheck size={15}/> As senhas são armazenadas com hash seguro. Funcionários continuam com o menu operacional do próprio setor, mas podem pesquisar serviços de todos os setores.</p></div>
 }
 
 export default function App() {
@@ -261,17 +403,17 @@ export default function App() {
   if (authState === 'login') return <AuthScreen setup={setup} onAuthenticated={authenticated}/>
   const isManager = user.role === 'gestor'
   const title = pageTitles[active] || [active === 'usuarios' ? 'Usuários e acessos' : 'Configurações', 'Área administrativa do OptiFlow.']
-  const allowed = isManager || active === user.sector
+  const allowed = isManager || active === user.sector || active === 'movimentacoes'
   return <div className="app-shell">
     <Sidebar active={active} setActive={setActive} open={menuOpen} close={() => setMenuOpen(false)} user={user} onLogout={logout}/>
     <main className="main-area">
       <header className="topbar">
         <div className="topbar-left"><button className="icon-button menu-toggle" onClick={() => setMenuOpen(true)} aria-label="Abrir menu"><Menu/></button><div className="breadcrumb">OptiFlow <ChevronRight size={14}/> <b>{title[0]}</b></div></div>
-        <div className="topbar-right"><div className="live-indicator"><i/> Acesso autenticado</div><div className="notification-wrap"><button className="icon-button notification-button" onClick={() => setNotificationsOpen(!notificationsOpen)} aria-label="Notificações"><Bell size={19}/><i/></button>{notificationsOpen && <div className="notification-popover"><b>Notificações</b><p>Você está conectado ao OptiFlow como {isManager ? 'gestor' : 'funcionário'}.</p></div>}</div><div className="top-avatar">{user.name.slice(0,2).toUpperCase()}</div><button className="top-logout" onClick={logout}>Sair</button></div>
+        <div className="topbar-right"><GlobalOrderSearch/><div className="live-indicator"><i/> Acesso autenticado</div><div className="notification-wrap"><button className="icon-button notification-button" onClick={() => setNotificationsOpen(!notificationsOpen)} aria-label="Notificações"><Bell size={19}/><i/></button>{notificationsOpen && <div className="notification-popover"><b>Notificações</b><p>Você está conectado ao OptiFlow como {isManager ? 'gestor' : 'funcionário'}.</p></div>}</div><div className="top-avatar">{user.name.slice(0,2).toUpperCase()}</div><button className="top-logout" onClick={logout}>Sair</button></div>
       </header>
       <div className="content">
         <div className="page-heading"><div><h1>{title[0]}</h1><p>{title[1]}</p></div><button className="date-button"><CalendarDays size={16}/> 15 nov, 2026 <ChevronDown size={14}/></button></div>
-        {isManager && active === 'dashboard' ? <Dashboard/> : isManager && active === 'usuarios' ? <UsersPage token={token} currentUser={user}/> : isManager && active === 'configuracoes' ? <div className="panel-card placeholder"><Settings size={28}/><h3>Configurações</h3><p>Esta área será desenvolvida na próxima etapa.</p></div> : allowed && sectorPages.includes(active) ? <SectionPage page={active}/> : isManager && ['quebras','expedicao'].includes(active) ? <SectionPage page={active}/> : <div className="panel-card placeholder"><ShieldCheck size={28}/><h3>Acesso restrito</h3><p>Seu usuário não tem permissão para visualizar esta área.</p></div>}
+        {active === 'movimentacoes' ? <MovementsPage token={token} user={user}/> : isManager && active === 'dashboard' ? <Dashboard/> : isManager && active === 'usuarios' ? <UsersPage token={token} currentUser={user}/> : isManager && active === 'configuracoes' ? <div className="panel-card placeholder"><Settings size={28}/><h3>Configurações</h3><p>Esta área será desenvolvida na próxima etapa.</p></div> : allowed && sectorPages.includes(active) ? <SectionPage page={active}/> : isManager && ['quebras','expedicao'].includes(active) ? <SectionPage page={active}/> : <div className="panel-card placeholder"><ShieldCheck size={28}/><h3>Acesso restrito</h3><p>Seu usuário não tem permissão para visualizar esta área.</p></div>}
       </div>
       <footer className="footer"><span>© 2026 OptiFlow</span><span>Gestão Inteligente de Produção Óptica</span></footer>
     </main>

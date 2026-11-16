@@ -12,7 +12,10 @@ const PORT = process.env.PORT || 3001
 const dataDir = path.join(__dirname, 'server-data')
 const usersFile = path.join(dataDir, 'users.json')
 const secretFile = path.join(dataDir, '.jwt-secret')
+const movementsFile = path.join(dataDir, 'movements.json')
 const sectors = ['montagem', 'digital', 'tradicional']
+let movementWriteQueue = Promise.resolve()
+const sectorLabels = { montagem: 'Montagem', digital: 'Surfaçagem Digital', tradicional: 'Surfaçagem Tradicional' }
 
 app.use(express.json({ limit: '20kb' }))
 
@@ -20,6 +23,17 @@ async function ensureStorage() {
   await fs.mkdir(dataDir, { recursive: true })
   try { await fs.access(usersFile) } catch { await fs.writeFile(usersFile, '[]', { flag: 'wx' }) }
   try { await fs.access(secretFile) } catch { await fs.writeFile(secretFile, crypto.randomBytes(48).toString('hex'), { flag: 'wx', mode: 0o600 }) }
+  try { await fs.access(movementsFile) } catch { await fs.writeFile(movementsFile, '[]', { flag: 'wx' }) }
+}
+async function readMovements() { return JSON.parse(await fs.readFile(movementsFile, 'utf8')) }
+async function writeMovements(items) { await fs.writeFile(movementsFile, JSON.stringify(items, null, 2)) }
+async function appendMovement(item) {
+  movementWriteQueue = movementWriteQueue.then(async () => {
+    const items = await readMovements()
+    items.push(item)
+    await writeMovements(items)
+  })
+  await movementWriteQueue
 }
 async function readUsers() { return JSON.parse(await fs.readFile(usersFile, 'utf8')) }
 async function writeUsers(users) { await fs.writeFile(usersFile, JSON.stringify(users, null, 2), { mode: 0o600 }) }
@@ -86,6 +100,26 @@ app.delete('/api/users/:id', auth, managerOnly, async (req, res) => {
   if (target.role === 'gestor' && users.filter(u => u.role === 'gestor').length === 1) return res.status(400).json({ error: 'O sistema precisa manter pelo menos um gestor.' })
   await writeUsers(users.filter(u => u.id !== req.params.id))
   res.json({ success: true })
+})
+
+// Histórico permanente de entrada e saída de serviços por setor.
+app.get('/api/movements', auth, async (req, res) => {
+  const items = await readMovements()
+  const visible = req.user.role === 'gestor' ? items : items.filter(item => item.sector === req.user.sector)
+  res.json({ movements: visible.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)) })
+})
+app.post('/api/movements', auth, async (req, res) => {
+  const { os, sector, type, occurredAt, notes } = req.body || {}
+  if (typeof os !== 'string' || !os.trim()) return res.status(400).json({ error: 'Informe o número da OS.' })
+  if (!sectors.includes(sector)) return res.status(400).json({ error: 'Selecione um setor válido.' })
+  if (req.user.role !== 'gestor' && sector !== req.user.sector) return res.status(403).json({ error: 'Funcionários só podem registrar movimentações do próprio setor.' })
+  if (!['entrada', 'saida'].includes(type)) return res.status(400).json({ error: 'Tipo de movimentação inválido.' })
+  const date = new Date(occurredAt)
+  if (!occurredAt || Number.isNaN(date.getTime())) return res.status(400).json({ error: 'Informe uma data e horário válidos.' })
+  if (date.getTime() > Date.now() + 5 * 60 * 1000) return res.status(400).json({ error: 'A data da movimentação não pode estar no futuro.' })
+  const item = { id: crypto.randomUUID(), os: os.trim().toUpperCase(), sector, sectorLabel: sectorLabels[sector], type, occurredAt: date.toISOString(), notes: typeof notes === 'string' ? notes.trim().slice(0, 300) : '', userName: req.user.name, userId: req.user.id }
+  await appendMovement(item)
+  res.status(201).json({ movement: item })
 })
 
 const distDir = path.join(__dirname, 'dist')

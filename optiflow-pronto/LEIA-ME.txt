@@ -1,7 +1,7 @@
 OPTIFLOW - LOGIN E CONTROLE DE USUARIOS
 ======================================
 
-Esta versão inclui autenticação real com servidor Node.js.
+Esta versão inclui autenticação real com servidor Node.js e pesquisa global de ordens.
 O primeiro acesso abre uma tela para criar o primeiro gestor.
 Depois disso, o cadastro de novos acessos fica disponível em "Usuários e acessos".
 
@@ -13,6 +13,14 @@ COMO INSTALAR
 5. Execute: npm run dev
 6. Abra o endereço mostrado pelo Vite (normalmente http://localhost:5173).
 7. No primeiro acesso, crie o nome, usuário e senha do gestor.
+
+PESQUISA GLOBAL DE SERVIÇOS
+1. Gestores e funcionários podem usar a barra "Pesquisar OS ou cliente" no topo.
+2. A pesquisa procura pelo número da OS ou por parte do nome do cliente.
+3. A pesquisa considera ordens de todos os setores, mesmo quando o funcionário
+   pertence a apenas um setor.
+4. Os resultados desta versão ainda são demonstrativos (lista local no App.jsx);
+   a conexão com o sistema real de produção ainda não foi implementada.
 
 CADASTRO DE FUNCIONÁRIOS
 1. Entre com a conta de gestor.
@@ -37,3 +45,12 @@ LIMITAÇÕES IMPORTANTES
 - O arquivo de usuários JSON é adequado para protótipo/pequena instalação local;
   antes de uso empresarial multiusuário, recomendamos migrar para banco de dados,
   HTTPS, política de backup e configuração de rede.
+
+
+CONTROLE DE MOVIMENTAÇÕES POR SETOR
+
+No menu Movimentações, registre cada entrada ou saída de uma OS em um setor. Informe o número da OS, setor, tipo de movimentação e data/horário. Funcionários podem registrar apenas no próprio setor; gestores podem registrar em qualquer setor.
+
+O relatório diário usa o calendário para somar as entradas e saídas de cada setor na data selecionada. O histórico fica salvo no servidor em server-data/movements.json. Faça backup dessa pasta para preservar usuários, chave de autenticação e histórico de movimentações.
+
+Importante: os registros de movimentação começam a contar a partir da implantação deste recurso. OS antigas não terão movimentações retroativas automaticamente; registre-as manualmente se precisar compor relatórios anteriores.
